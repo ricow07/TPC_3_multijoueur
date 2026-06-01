@@ -13,6 +13,10 @@
 typedef struct {
     int   id;
     float dir_x, dir_y, dir_z;
+    int   color;
+    int   respawn;
+    char  chat[64];
+    char  name[16];
 } ClientInputPacket;
 
 typedef struct {
@@ -24,6 +28,9 @@ typedef struct {
     int   id;
     float x, y, z;
     float radius;
+    int   color;
+    int   is_dead;
+    char  name[16];
 } PlayerState;
 
 typedef struct {
@@ -36,6 +43,7 @@ typedef struct {
     PlayerState players[MAX_PLAYERS];
     int         food_count;
     FoodState   food[MAX_FOOD];
+    char        chat_history[8][80];
 } WorldStatePacket;
 
 #endif

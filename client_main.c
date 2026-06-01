@@ -32,6 +32,14 @@ static SOCKET             g_sock;
 static struct sockaddr_in g_server_addr;
 static int                g_player_id = 0;
 static volatile int       g_connected = 0;
+static int                g_my_color = 0;
+static int                g_chat_mode = 0;
+static char               g_chat_input[64] = "";
+static char               g_chat_to_send[64] = "";
+static int                g_want_respawn = 0;
+static HWND               g_combo_color = NULL;
+static char               g_my_name[16] = "";
+static HWND               g_edit_name = NULL;
 
 /* ── monde partagé ── */
 static WorldStatePacket g_world;
@@ -399,7 +407,7 @@ static void Render(HWND hwnd) {
         float fog = 1.0f - (c.z / FAR_FOG); if (fog < 0) fog = 0;
         items[n].type=1; items[n].idx=i; items[n].cz=c.z;
         items[n].sx=sx; items[n].sy=sy; items[n].sr=sr;
-        items[n].col=PLAYER_COLORS[p->id % MAX_PLAYERS];
+        items[n].col=PLAYER_COLORS[p->color % 16];
         items[n].fog=fog;
         n++;
     }
@@ -417,9 +425,9 @@ static void Render(HWND hwnd) {
                    items[i].sr, items[i].col, items[i].fog);
         if (items[i].type == 1 && items[i].sr >= 10) {
             PlayerState *p = &world.players[items[i].idx];
-            char lbl[24];
-            if (p->id == g_player_id) snprintf(lbl, sizeof(lbl), "Vous");
-            else                      snprintf(lbl, sizeof(lbl), "P%d", p->id);
+            char lbl[40];
+            if (p->id == g_player_id) snprintf(lbl, sizeof(lbl), "%s (Vous)", p->name);
+            else                      snprintf(lbl, sizeof(lbl), "%s", p->name);
             HFONT oldF = SelectObject(memDC, labelFont);
             SetBkMode(memDC, TRANSPARENT);
             SIZE sz; GetTextExtentPoint32(memDC, lbl, (int)strlen(lbl), &sz);
@@ -454,7 +462,7 @@ static void Render(HWND hwnd) {
 
         char title[64];
         snprintf(title, sizeof(title), "AGAR  3D   —   Joueur %d", g_player_id);
-        SetTextColor(memDC, PLAYER_COLORS[g_player_id % MAX_PLAYERS]);
+        SetTextColor(memDC, PLAYER_COLORS[me->color % 16]);
         TextOut(memDC, 16 * SS, 11 * SS, title, (int)strlen(title));
 
         char hud[200];
@@ -494,8 +502,8 @@ static void Render(HWND hwnd) {
             PlayerState *p = &world.players[sorted_ids[i]];
             if (p->radius < 1.0f) continue;
             char row[48];
-            snprintf(row, sizeof(row), "%d. P%d  —  %.0f", rank+1, p->id, p->radius);
-            SetTextColor(memDC, PLAYER_COLORS[p->id % MAX_PLAYERS]);
+            snprintf(row, sizeof(row), "%d. %s  —  %.0f", rank+1, p->name[0] ? p->name : "Joueur", p->radius);
+            SetTextColor(memDC, PLAYER_COLORS[p->color % 16]);
             TextOut(memDC, (W - 230) * SS, (80 + rank * 22) * SS, row, (int)strlen(row));
             rank++;
         }
@@ -512,6 +520,47 @@ static void Render(HWND hwnd) {
 
         SelectObject(memDC, oldF);
         DeleteObject(hudFont);
+
+        /* Draw Chat History and Input */
+        HFONT chatFont = make_font(14 * SS, 1, "Segoe UI");
+        SelectObject(memDC, chatFont);
+        SetBkMode(memDC, TRANSPARENT);
+        for (int i = 0; i < 8; i++) {
+            if (world.chat_history[i][0] != '\0') {
+                SetTextColor(memDC, HUD_TEXT);
+                TextOut(memDC, 16 * SS, (H - 200 + i*18) * SS, world.chat_history[i], (int)strlen(world.chat_history[i]));
+            }
+        }
+        
+        if (g_chat_mode) {
+            char input_buf[100];
+            snprintf(input_buf, sizeof(input_buf), "Chat: %s_", g_chat_input);
+            SetTextColor(memDC, ACCENT);
+            TextOut(memDC, 16 * SS, (H - 200 + 8*18 + 5) * SS, input_buf, (int)strlen(input_buf));
+        } else {
+            SetTextColor(memDC, HUD_DIM);
+            TextOut(memDC, 16 * SS, (H - 200 + 8*18 + 5) * SS, "[Appuyez sur Entree pour parler]", 32);
+        }
+        DeleteObject(chatFont);
+
+        /* Draw Game Over */
+        if (me->is_dead) {
+            HFONT bigFont = make_font(60 * SS, 1, "Segoe UI");
+            SelectObject(memDC, bigFont);
+            SetTextColor(memDC, ERR_COLOR);
+            const char* go = "GAME OVER";
+            SIZE sz; GetTextExtentPoint32(memDC, go, (int)strlen(go), &sz);
+            TextOut(memDC, (W_ss - sz.cx) / 2, (H_ss - sz.cy) / 2 - 40 * SS, go, (int)strlen(go));
+            DeleteObject(bigFont);
+            
+            HFONT rFont = make_font(24 * SS, 1, "Segoe UI");
+            SelectObject(memDC, rFont);
+            SetTextColor(memDC, HUD_TEXT);
+            const char* rp = "Appuyez sur 'R' pour ressusciter";
+            GetTextExtentPoint32(memDC, rp, (int)strlen(rp), &sz);
+            TextOut(memDC, (W_ss - sz.cx) / 2, (H_ss - sz.cy) / 2 + 40 * SS, rp, (int)strlen(rp));
+            DeleteObject(rFont);
+        }
 
         HPEN rp = CreatePen(PS_SOLID, 1 * SS, CROSSHAIR);
         op = SelectObject(memDC, rp);
@@ -581,18 +630,33 @@ static DWORD WINAPI NetworkThread(LPVOID param) {
         float rz =  sinf(g_yaw);
 
         float dx = 0, dy = 0, dz = 0;
-        if ((GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState(VK_UP)    & 0x8000)) { dx += fx; dy += fy; dz += fz; }
-        if ((GetAsyncKeyState('S') & 0x8000) || (GetAsyncKeyState(VK_DOWN)  & 0x8000)) { dx -= fx; dy -= fy; dz -= fz; }
-        if ((GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000)) { dx += rx; dz += rz; }
-        if ((GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT)  & 0x8000)) { dx -= rx; dz -= rz; }
+        int am_i_dead = 0;
+        EnterCriticalSection(&g_cs);
+        if (g_player_id >= 0 && g_player_id < MAX_PLAYERS) am_i_dead = g_world.players[g_player_id].is_dead;
+        LeaveCriticalSection(&g_cs);
+        
+        if (!g_chat_mode && !am_i_dead) {
+            if ((GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState(VK_UP)    & 0x8000)) { dx += fx; dy += fy; dz += fz; }
+            if ((GetAsyncKeyState('S') & 0x8000) || (GetAsyncKeyState(VK_DOWN)  & 0x8000)) { dx -= fx; dy -= fy; dz -= fz; }
+            if ((GetAsyncKeyState('D') & 0x8000) || (GetAsyncKeyState(VK_RIGHT) & 0x8000)) { dx += rx; dz += rz; }
+            if ((GetAsyncKeyState('A') & 0x8000) || (GetAsyncKeyState(VK_LEFT)  & 0x8000)) { dx -= rx; dz -= rz; }
+        }
 
         float len = sqrtf(dx*dx + dy*dy + dz*dz);
         if (len > 0.01f) { dx/=len; dy/=len; dz/=len; }
         else             { dx = dy = dz = 0; }
 
         ClientInputPacket inp;
+        memset(&inp, 0, sizeof(inp));
         inp.id    = g_player_id;
         inp.dir_x = dx; inp.dir_y = dy; inp.dir_z = dz;
+        inp.color = g_my_color;
+        inp.respawn = g_want_respawn;
+        strncpy(inp.chat, g_chat_to_send, 63);
+        strncpy(inp.name, g_my_name, 15);
+        inp.name[15] = '\0';
+        g_chat_to_send[0] = '\0';
+        g_want_respawn = 0;
         sendto(g_sock, (char*)&inp, sizeof(inp), 0,
                (struct sockaddr*)&g_server_addr, sizeof(g_server_addr));
 
@@ -628,6 +692,8 @@ static int try_connect(const char *server_ip) {
     ClientInputPacket disco;
     memset(&disco, 0, sizeof(disco));
     disco.id = DISCOVERY_ID;
+    disco.color = g_my_color;
+    strncpy(disco.name, g_my_name, 15);
 
     for (int attempt = 0; attempt < 5; attempt++) {
         sendto(g_sock, (char*)&disco, sizeof(disco), 0,
@@ -655,7 +721,7 @@ static int try_connect(const char *server_ip) {
    Fenêtre de connexion (dialog perso)
 ════════════════════════════════════════ */
 #define DLG_W 480
-#define DLG_H 340
+#define DLG_H 440
 #define IDC_EDIT_IP  1001
 #define IDC_BTN_OK   1002
 
@@ -729,6 +795,8 @@ static void draw_dialog(HWND hwnd) {
         HFONT of = SelectObject(memDC, f);
         SetTextColor(memDC, HUD_TEXT);
         TextOut(memDC, 55, 130, "Adresse IP du serveur :", 24);
+        TextOut(memDC, 55, 200, "Pseudo :", 8);
+        TextOut(memDC, 55, 270, "Couleur du cube :", 17);
         SelectObject(memDC, of);
         DeleteObject(f);
     }
@@ -737,7 +805,7 @@ static void draw_dialog(HWND hwnd) {
         HFONT f = make_font(14, 0, "Segoe UI");
         HFONT of = SelectObject(memDC, f);
         SetTextColor(memDC, g_status_color);
-        RECT t = {0, 218, W, 240};
+        RECT t = {0, 395, W, 420};
         DrawText(memDC, g_status_msg, -1, &t, DT_CENTER | DT_SINGLELINE);
         SelectObject(memDC, of);
         DeleteObject(f);
@@ -759,11 +827,26 @@ static LRESULT CALLBACK DlgWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         HFONT ef = make_font(22, 0, "Consolas");
         SendMessage(g_edit_ip, WM_SETFONT, (WPARAM)ef, TRUE);
         SendMessage(g_edit_ip, EM_SETSEL, 0, -1);
+        
+        g_edit_name = CreateWindowEx(WS_EX_CLIENTEDGE, "EDIT", "Joueur",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_LEFT | ES_AUTOHSCROLL,
+            55, 223, 370, 38, hwnd, (HMENU)(intptr_t)1004, NULL, NULL);
+        SendMessage(g_edit_name, WM_SETFONT, (WPARAM)ef, TRUE);
+
+        g_combo_color = CreateWindow("COMBOBOX", "",
+            CBS_DROPDOWNLIST | WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP,
+            55, 293, 370, 200, hwnd, (HMENU)(intptr_t)1003, NULL, NULL);
+        HFONT bf = make_font(16, 1, "Segoe UI");
+        SendMessage(g_combo_color, WM_SETFONT, (WPARAM)bf, TRUE);
+        const char* colors[] = {"Rouge", "Bleu clair", "Vert emeraude", "Jaune", "Violet", "Cyan", "Rose", "Vert clair", "Orange", "Bleu ciel", "Jaune pale", "Mauve", "Vert menthe", "Rose pale", "Vert pomme", "Bleu ardoise"};
+        for (int i = 0; i < 16; i++) {
+            SendMessage(g_combo_color, CB_ADDSTRING, 0, (LPARAM)colors[i]);
+        }
+        SendMessage(g_combo_color, CB_SETCURSEL, 0, 0);
 
         g_btn_ok = CreateWindow("BUTTON", "Se connecter",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON | BS_DEFPUSHBUTTON,
-            165, 252, 150, 44, hwnd, (HMENU)(intptr_t)IDC_BTN_OK, NULL, NULL);
-        HFONT bf = make_font(16, 1, "Segoe UI");
+            165, 345, 150, 44, hwnd, (HMENU)(intptr_t)IDC_BTN_OK, NULL, NULL);
         SendMessage(g_btn_ok, WM_SETFONT, (WPARAM)bf, TRUE);
 
         g_edit_brush = CreateSolidBrush(RGB(255, 255, 255));
@@ -798,9 +881,24 @@ static LRESULT CALLBACK DlgWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             strncpy(g_input_ip, ip + s, sizeof(g_input_ip) - 1);
             g_input_ip[sizeof(g_input_ip) - 1] = 0;
+            
+            char name_buf[64];
+            GetWindowText(g_edit_name, name_buf, sizeof(name_buf));
+            int ns = 0, ne = (int)strlen(name_buf);
+            while (ns < ne && (name_buf[ns] == ' ' || name_buf[ns] == '\t')) ns++;
+            while (ne > ns && (name_buf[ne-1] == ' ' || name_buf[ne-1] == '\t')) ne--;
+            name_buf[ne] = 0;
+            strncpy(g_my_name, name_buf + ns, 15);
+            g_my_name[15] = '\0';
+            if (g_my_name[0] == '\0') strcpy(g_my_name, "Joueur");
+            
+            g_my_color = (int)SendMessage(g_combo_color, CB_GETCURSEL, 0, 0);
+            if (g_my_color < 0 || g_my_color > 15) g_my_color = 0;
 
             EnableWindow(g_btn_ok, FALSE);
             EnableWindow(g_edit_ip, FALSE);
+            EnableWindow(g_combo_color, FALSE);
+            EnableWindow(g_edit_name, FALSE);
             strncpy(g_status_msg, "Connexion en cours...", sizeof(g_status_msg));
             g_status_color = HUD_DIM;
             InvalidateRect(hwnd, NULL, TRUE);
@@ -819,6 +917,8 @@ static LRESULT CALLBACK DlgWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_status_color = ERR_COLOR;
             EnableWindow(g_btn_ok, TRUE);
             EnableWindow(g_edit_ip, TRUE);
+            EnableWindow(g_combo_color, TRUE);
+            EnableWindow(g_edit_name, TRUE);
             SetFocus(g_edit_ip);
             SendMessage(g_edit_ip, EM_SETSEL, 0, -1);
             InvalidateRect(hwnd, NULL, TRUE);
@@ -874,9 +974,53 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         ShowCursor(TRUE);
         return 0;
     case WM_KEYDOWN:
-        if (wp == VK_ESCAPE) { PostQuitMessage(0); return 0; }
-        if (wp == VK_TAB)    { set_mouse_capture(!g_mouse_captured); return 0; }
+        if (g_chat_mode) {
+            if (wp == VK_RETURN) {
+                g_chat_mode = 0;
+                strncpy(g_chat_to_send, g_chat_input, 63);
+                g_chat_to_send[63] = '\0';
+                g_chat_input[0] = '\0';
+                if (g_mouse_captured) {
+                    recompute_screen_center();
+                    SetCursorPos(g_screen_center.x, g_screen_center.y);
+                }
+            } else if (wp == VK_BACK) {
+                int len = (int)strlen(g_chat_input);
+                if (len > 0) g_chat_input[len - 1] = '\0';
+            } else if (wp == VK_ESCAPE) {
+                g_chat_mode = 0;
+                g_chat_input[0] = '\0';
+                if (g_mouse_captured) {
+                    recompute_screen_center();
+                    SetCursorPos(g_screen_center.x, g_screen_center.y);
+                }
+            }
+            return 0;
+        } else {
+            if (wp == VK_RETURN) {
+                g_chat_mode = 1;
+                return 0;
+            }
+            if (wp == 'R') {
+                g_want_respawn = 1;
+                return 0;
+            }
+            if (wp == VK_ESCAPE) { PostQuitMessage(0); return 0; }
+            if (wp == VK_TAB)    { set_mouse_capture(!g_mouse_captured); return 0; }
+        }
         return 0;
+    case WM_CHAR:
+        if (g_chat_mode) {
+            if (wp >= 32 && wp <= 126) {
+                int len = (int)strlen(g_chat_input);
+                if (len < 63) {
+                    g_chat_input[len] = (char)wp;
+                    g_chat_input[len + 1] = '\0';
+                }
+            }
+            return 0;
+        }
+        break;
     case WM_DESTROY:
         if (g_mouse_captured) ShowCursor(TRUE);
         PostQuitMessage(0);

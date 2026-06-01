@@ -46,7 +46,9 @@ typedef struct {
     struct sockaddr_in  addr;
     int                 has_addr;
     DWORD               last_seen;
-    DWORD               respawn_time;  /* 0 = vivant, sinon = moment de mort */
+    int                 is_dead;
+    int                 color;
+    char                name[16];
 } ServerPlayer;
 
 static ServerPlayer    players[MAX_PLAYERS];
@@ -55,6 +57,13 @@ static int             food_count = MAX_FOOD;
 static CRITICAL_SECTION g_cs;
 static SOCKET          sockfd;
 static volatile int    g_running = 1;
+
+static char            server_chat_history[8][80];
+static void push_chat(const char *msg) {
+    for (int i = 0; i < 7; i++) strncpy(server_chat_history[i], server_chat_history[i+1], 80);
+    strncpy(server_chat_history[7], msg, 79);
+    server_chat_history[7][79] = 0;
+}
 
 /* IPs locales du serveur (pour affichage) */
 static char  g_local_ips[8][32];
@@ -124,8 +133,8 @@ static void timeout_inactive(void) {
 }
 
 static void check_food_collision(ServerPlayer *p) {
-    /* Skip collision check for dead players (waiting to respawn) */
-    if (p->respawn_time != 0) return;
+    /* Skip collision check for dead players */
+    if (p->is_dead) return;
     float r2 = (p->radius + 6.0f) * (p->radius + 6.0f);
     for (int i = 0; i < food_count; i++) {
         float dx = p->x - food[i].x;
@@ -142,9 +151,9 @@ static void check_food_collision(ServerPlayer *p) {
 
 static void check_player_collision(void) {
     for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (!players[i].active || players[i].respawn_time != 0) continue;
+        if (!players[i].active || players[i].is_dead) continue;
         for (int j = 0; j < MAX_PLAYERS; j++) {
-            if (!players[j].active || players[j].respawn_time != 0 || i == j) continue;
+            if (!players[j].active || players[j].is_dead || i == j) continue;
             float dx = players[i].x - players[j].x;
             float dy = players[i].y - players[j].y;
             float dz = players[i].z - players[j].z;
@@ -155,27 +164,19 @@ static void check_player_collision(void) {
                 float vp = (4.0f/3.0f)*3.14159f*players[j].radius*players[j].radius*players[j].radius;
                 ve += vp;
                 players[i].radius = cbrtf(ve / ((4.0f/3.0f)*3.14159f));
-                /* Marquer le joueur mangé comme mort, il respawnera dans 3 secondes */
-                players[j].respawn_time = GetTickCount();
+                /* Marquer le joueur mangé comme mort, il respawnera sur demande */
+                players[j].is_dead = 1;
+                
+                char death_msg[80];
+                snprintf(death_msg, sizeof(death_msg), "%s a devore %s !", players[i].name, players[j].name);
+                push_chat(death_msg);
             }
         }
     }
 }
 
 static void check_respawn_timers(void) {
-    DWORD now = GetTickCount();
-    const DWORD respawn_delay_ms = 3000;  /* 3 secondes */
-    for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (!players[i].active || players[i].respawn_time == 0) continue;
-        if (now - players[i].respawn_time >= respawn_delay_ms) {
-            /* Respawner le joueur */
-            players[i].radius = 25.0f;
-            players[i].x = frand_in(100.0f, MAP_SIZE - 100.0f);
-            players[i].y = frand_in(100.0f, MAP_SIZE - 100.0f);
-            players[i].z = frand_in(100.0f, MAP_SIZE - 100.0f);
-            players[i].respawn_time = 0;  /* Marqué comme vivant */
-        }
-    }
+    /* La logique de respawn auto est supprimée, le client envoie inp.respawn = 1 */
 }
 
 static void build_world_packet(WorldStatePacket *pkt) {
@@ -186,9 +187,14 @@ static void build_world_packet(WorldStatePacket *pkt) {
         pkt->players[i].x      = players[i].x;
         pkt->players[i].y      = players[i].y;
         pkt->players[i].z      = players[i].z;
-        pkt->players[i].radius = players[i].active ? players[i].radius : 0.0f;
+        pkt->players[i].radius = (players[i].active && !players[i].is_dead) ? players[i].radius : 0.0f;
+        pkt->players[i].color  = players[i].color;
+        pkt->players[i].is_dead= players[i].is_dead;
+        strncpy(pkt->players[i].name, players[i].name, 15);
+        pkt->players[i].name[15] = '\0';
     }
     for (int i = 0; i < food_count; i++) pkt->food[i] = food[i];
+    for (int i = 0; i < 8; i++) strncpy(pkt->chat_history[i], server_chat_history[i], 80);
 }
 
 static void broadcast_world_state(void) {
@@ -246,7 +252,35 @@ static DWORD WINAPI ServerThread(LPVOID p) {
                     players[id].y = frand_in(200.0f, MAP_SIZE - 200.0f);
                     players[id].z = frand_in(200.0f, MAP_SIZE - 200.0f);
                     players[id].radius = 25.0f;
-                    players[id].respawn_time = 0;
+                    players[id].is_dead = 0;
+                    players[id].color = input.color;
+                    strncpy(players[id].name, input.name, 15);
+                    players[id].name[15] = '\0';
+                    if (players[id].name[0] == '\0') snprintf(players[id].name, sizeof(players[id].name), "P%d", id);
+                    
+                    char join_msg[80];
+                    snprintf(join_msg, sizeof(join_msg), "%s a rejoint la partie !", players[id].name);
+                    push_chat(join_msg);
+                }
+                
+                players[id].color = input.color;
+                strncpy(players[id].name, input.name, 15);
+                players[id].name[15] = '\0';
+                if (players[id].name[0] == '\0') snprintf(players[id].name, sizeof(players[id].name), "P%d", id);
+
+                if (players[id].is_dead && input.respawn) {
+                    players[id].is_dead = 0;
+                    players[id].radius = 25.0f;
+                    players[id].x = frand_in(100.0f, MAP_SIZE - 100.0f);
+                    players[id].y = frand_in(100.0f, MAP_SIZE - 100.0f);
+                    players[id].z = frand_in(100.0f, MAP_SIZE - 100.0f);
+                }
+
+                if (input.chat[0] != '\0') {
+                    char chat_msg[80];
+                    input.chat[63] = '\0'; // ensure null termination
+                    snprintf(chat_msg, sizeof(chat_msg), "[%s]: %s", players[id].name, input.chat);
+                    push_chat(chat_msg);
                 }
 
                 float base_speed = 4.0f;
