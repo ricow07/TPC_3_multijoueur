@@ -133,7 +133,7 @@ static void check_food_collision(ServerPlayer *p) {
         float dz = p->z - food[i].z;
         if (dx*dx + dy*dy + dz*dz < r2) {
             float vol = (4.0f/3.0f) * 3.14159f * p->radius * p->radius * p->radius;
-            vol += 350.0f;
+            vol += 5000.0f;
             p->radius = cbrtf(vol / ((4.0f/3.0f) * 3.14159f));
             respawn_food(i);
         }
