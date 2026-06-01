@@ -577,8 +577,8 @@ static DWORD WINAPI NetworkThread(LPVOID param) {
         float fx = sinf(g_yaw) * cp;
         float fy = sp;
         float fz = cosf(g_yaw) * cp;
-        float rx =  cosf(g_yaw);
-        float rz = -sinf(g_yaw);
+        float rx = -cosf(g_yaw);
+        float rz =  sinf(g_yaw);
 
         float dx = 0, dy = 0, dz = 0;
         if ((GetAsyncKeyState('W') & 0x8000) || (GetAsyncKeyState(VK_UP)    & 0x8000)) { dx += fx; dy += fy; dz += fz; }
