@@ -11,7 +11,7 @@
 #include "protocol.h"
 
 #pragma comment(lib, "ws2_32.lib")
-
+#pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 #define WINDOW_W 1100
 #define WINDOW_H 750
 
@@ -60,6 +60,9 @@ static int   g_fps_frames = 0;
 static DWORD g_fps_last_tick = 0;
 static float g_fps_value = 0.0f;
 
+static int g_show_tutorial = 0;
+static void DrawTutorialOverlay(HDC hdc, int W, int H, int S);
+
 /* ════════════════════════════════════════
    Palette
 ════════════════════════════════════════ */
@@ -77,19 +80,19 @@ static const COLORREF FOOD_COLORS[8] = {
     RGB(245, 180, 115),  RGB(120, 230, 220)
 };
 
-#define BG_TOP      RGB(238, 244, 252)
-#define BG_BOT      RGB(214, 226, 244)
-#define EDGE_COL    RGB( 80, 130, 200)
-#define GRID_FLOOR  RGB(195, 210, 232)
-#define GRID_CEIL   RGB(218, 226, 240)
-#define HUD_BG      RGB(255, 255, 255)
-#define HUD_BORDER  RGB(160, 188, 222)
-#define HUD_TEXT    RGB( 55,  70, 100)
-#define HUD_DIM     RGB(120, 140, 175)
-#define SHADOW_COL  RGB(135, 150, 178)
-#define CROSSHAIR   RGB( 70,  95, 130)
-#define ACCENT      RGB( 80, 130, 200)
-#define ERR_COLOR   RGB(190,  60,  60)
+#define BG_TOP      RGB(25, 25, 32)
+#define BG_BOT      RGB(10, 10, 15)
+#define EDGE_COL    RGB(0, 150, 255)
+#define GRID_FLOOR  RGB(40, 40, 55)
+#define GRID_CEIL   RGB(35, 35, 50)
+#define HUD_BG      RGB(30, 30, 40)
+#define HUD_BORDER  RGB(60, 60, 80)
+#define HUD_TEXT    RGB(240, 240, 240)
+#define HUD_DIM     RGB(150, 150, 170)
+#define SHADOW_COL  RGB(15, 15, 20)
+#define CROSSHAIR   RGB(255, 255, 255)
+#define ACCENT      RGB(0, 210, 255)
+#define ERR_COLOR   RGB(255, 50, 50)
 
 /* ════════════════════════════════════════
    Math 3D
@@ -484,11 +487,11 @@ static void Render(HWND hwnd) {
         HBRUSH lbBg = CreateSolidBrush(HUD_BG);
         FillRect(memDC, &lbRc, lbBg);
         DeleteObject(lbBg);
-        HPEN lbPen = CreatePen(PS_SOLID, 1 * SS, HUD_BORDER);
+        HPEN lbPen = CreatePen(PS_SOLID, 2 * SS, ACCENT);
         op = SelectObject(memDC, lbPen);
         HBRUSH nb = GetStockObject(NULL_BRUSH);
         HBRUSH ob = SelectObject(memDC, nb);
-        Rectangle(memDC, lbRc.left, lbRc.top, lbRc.right, lbRc.bottom);
+        RoundRect(memDC, lbRc.left, lbRc.top, lbRc.right, lbRc.bottom, 16 * SS, 16 * SS);
         SelectObject(memDC, ob); SelectObject(memDC, op);
         DeleteObject(lbPen);
 
@@ -558,8 +561,25 @@ static void Render(HWND hwnd) {
             SetTextColor(memDC, HUD_TEXT);
             const char* rp = "Appuyez sur 'R' pour ressusciter";
             GetTextExtentPoint32(memDC, rp, (int)strlen(rp), &sz);
-            TextOut(memDC, (W_ss - sz.cx) / 2, (H_ss - sz.cy) / 2 + 40 * SS, rp, (int)strlen(rp));
+            TextOut(memDC, (W_ss - sz.cx) / 2, (H_ss - sz.cy) / 2 + 30 * SS, rp, (int)strlen(rp));
             DeleteObject(rFont);
+            
+            RECT btnRc = { W_ss/2 - 75*SS, H_ss/2 + 80*SS, W_ss/2 + 75*SS, H_ss/2 + 120*SS };
+            HBRUSH btnBg = CreateSolidBrush(ACCENT);
+            HPEN btnPen = CreatePen(PS_NULL, 0, 0);
+            HBRUSH ob = SelectObject(memDC, btnBg);
+            HPEN op = SelectObject(memDC, btnPen);
+            RoundRect(memDC, btnRc.left, btnRc.top, btnRc.right, btnRc.bottom, 15*SS, 15*SS);
+            SelectObject(memDC, ob); SelectObject(memDC, op);
+            DeleteObject(btnBg); DeleteObject(btnPen);
+            
+            HFONT tFont = make_font(20 * SS, 1, "Segoe UI");
+            SelectObject(memDC, tFont);
+            SetTextColor(memDC, RGB(255, 255, 255));
+            const char* tut = "Tutoriel";
+            GetTextExtentPoint32(memDC, tut, (int)strlen(tut), &sz);
+            TextOut(memDC, (W_ss - sz.cx) / 2, btnRc.top + (40*SS - sz.cy) / 2, tut, (int)strlen(tut));
+            DeleteObject(tFont);
         }
 
         HPEN rp = CreatePen(PS_SOLID, 1 * SS, CROSSHAIR);
@@ -568,6 +588,10 @@ static void Render(HWND hwnd) {
         MoveToEx(memDC, W_ss/2, H_ss/2 - 6 * SS, NULL); LineTo(memDC, W_ss/2, H_ss/2 + 6 * SS);
         SelectObject(memDC, op);
         DeleteObject(rp);
+    }
+
+    if (g_show_tutorial) {
+        DrawTutorialOverlay(memDC, W_ss, H_ss, SS);
     }
 
     SetStretchBltMode(hdc, HALFTONE);
@@ -676,6 +700,60 @@ static DWORD WINAPI NetworkThread(LPVOID param) {
 }
 
 /* ════════════════════════════════════════
+   Tutoriel
+════════════════════════════════════════ */
+static void DrawTutorialOverlay(HDC hdc, int W, int H, int S) {
+    int w = 450 * S;
+    int h = 350 * S;
+    RECT rc = { (W - w)/2, (H - h)/2, (W + w)/2, (H + h)/2 };
+
+    HBRUSH bg = CreateSolidBrush(HUD_BG);
+    HPEN pen = CreatePen(PS_SOLID, 2 * S, ACCENT);
+    HBRUSH ob = SelectObject(hdc, bg);
+    HPEN op = SelectObject(hdc, pen);
+    RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, 20*S, 20*S);
+    SelectObject(hdc, ob); SelectObject(hdc, op);
+    DeleteObject(bg); DeleteObject(pen);
+
+    int cx = rc.right - 25*S, cy = rc.top + 25*S, cr = 10*S;
+    HPEN xPen = CreatePen(PS_SOLID, 3*S, ERR_COLOR);
+    op = SelectObject(hdc, xPen);
+    MoveToEx(hdc, cx - cr, cy - cr, NULL); LineTo(hdc, cx + cr, cy + cr);
+    MoveToEx(hdc, cx - cr, cy + cr, NULL); LineTo(hdc, cx + cr, cy - cr);
+    SelectObject(hdc, op);
+    DeleteObject(xPen);
+
+    HFONT titleF = make_font(24 * S, 1, "Segoe UI Black");
+    HFONT textF = make_font(15 * S, 0, "Segoe UI");
+    
+    SetBkMode(hdc, TRANSPARENT);
+    
+    SelectObject(hdc, titleF);
+    SetTextColor(hdc, ACCENT);
+    RECT tr = {rc.left, rc.top + 20*S, rc.right - 40*S, rc.top + 50*S};
+    DrawText(hdc, "REGLES DU JEU ET CONTROLES", -1, &tr, DT_CENTER | DT_SINGLELINE);
+    
+    SelectObject(hdc, textF);
+    SetTextColor(hdc, HUD_TEXT);
+    const char *rules = 
+        "- Mangez les cubes pour grandir\n"
+        "- Mangez les joueurs plus petits\n"
+        "- Evitez les joueurs plus grands\n\n"
+        "[W/A/S/D] ou [Fleches] : Se deplacer\n"
+        "[Souris] : Viser    [Molette] : Zoomer\n"
+        "[Tab] : Afficher / Cacher curseur\n"
+        "[Entree] : Chat    [R] : Ressusciter\n"
+        "[Echap] : Quitter\n\n"
+        "(Cliquez n'importe ou pour fermer)";
+    
+    RECT txtR = {rc.left + 30*S, rc.top + 70*S, rc.right - 30*S, rc.bottom - 20*S};
+    DrawText(hdc, rules, -1, &txtR, DT_LEFT);
+    
+    DeleteObject(titleF);
+    DeleteObject(textF);
+}
+
+/* ════════════════════════════════════════
    Connexion : envoie un paquet de découverte
    à l'IP donnée et attend la réponse magique
 ════════════════════════════════════════ */
@@ -771,7 +849,7 @@ static void draw_dialog(HWND hwnd) {
 
     /* titre */
     {
-        HFONT f = make_font(40, 1, "Segoe UI");
+        HFONT f = make_font(48, 1, "Segoe UI Black");
         HFONT of = SelectObject(memDC, f);
         SetTextColor(memDC, ACCENT);
         RECT t = {0, 22, W, 80};
@@ -811,11 +889,24 @@ static void draw_dialog(HWND hwnd) {
         DeleteObject(f);
     }
 
+    if (g_show_tutorial) {
+        DrawTutorialOverlay(memDC, W, H, 1);
+    }
+
     BitBlt(hdc, 0, 0, W, H, memDC, 0, 0, SRCCOPY);
     SelectObject(memDC, oldBmp);
     DeleteObject(memBmp);
     DeleteDC(memDC);
     EndPaint(hwnd, &ps);
+}
+
+static void ToggleDialogControls(HWND hwnd, int show) {
+    int cmd = show ? SW_SHOW : SW_HIDE;
+    ShowWindow(GetDlgItem(hwnd, 1001), cmd);
+    ShowWindow(GetDlgItem(hwnd, 1002), cmd);
+    ShowWindow(GetDlgItem(hwnd, 1003), cmd);
+    ShowWindow(GetDlgItem(hwnd, 1004), cmd);
+    ShowWindow(GetDlgItem(hwnd, 1005), cmd);
 }
 
 static LRESULT CALLBACK DlgWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -846,8 +937,13 @@ static LRESULT CALLBACK DlgWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
         g_btn_ok = CreateWindow("BUTTON", "Se connecter",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON | BS_DEFPUSHBUTTON,
-            165, 345, 150, 44, hwnd, (HMENU)(intptr_t)IDC_BTN_OK, NULL, NULL);
+            80, 345, 150, 44, hwnd, (HMENU)(intptr_t)IDC_BTN_OK, NULL, NULL);
         SendMessage(g_btn_ok, WM_SETFONT, (WPARAM)bf, TRUE);
+
+        HWND btn_tut = CreateWindow("BUTTON", "Tutoriel",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            250, 345, 150, 44, hwnd, (HMENU)(intptr_t)1005, NULL, NULL);
+        SendMessage(btn_tut, WM_SETFONT, (WPARAM)bf, TRUE);
 
         g_edit_brush = CreateSolidBrush(RGB(255, 255, 255));
         SetFocus(g_edit_ip);
@@ -858,13 +954,27 @@ static LRESULT CALLBACK DlgWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_ERASEBKGND:
         return 1;
+    case WM_LBUTTONDOWN:
+        if (g_show_tutorial) {
+            g_show_tutorial = 0;
+            ToggleDialogControls(hwnd, 1);
+            InvalidateRect(hwnd, NULL, FALSE);
+            return 0;
+        }
+        return 0;
     case WM_CTLCOLOREDIT: {
         HDC dc = (HDC)wp;
         SetBkColor(dc, RGB(255, 255, 255));
-        SetTextColor(dc, HUD_TEXT);
+        SetTextColor(dc, RGB(30, 30, 40));
         return (LRESULT)g_edit_brush;
     }
     case WM_COMMAND:
+        if (LOWORD(wp) == 1005 && HIWORD(wp) == BN_CLICKED) {
+            g_show_tutorial = 1;
+            ToggleDialogControls(hwnd, 0);
+            InvalidateRect(hwnd, NULL, FALSE);
+            return 0;
+        }
         if (LOWORD(wp) == IDC_BTN_OK && HIWORD(wp) == BN_CLICKED) {
             char ip[64];
             GetWindowText(g_edit_ip, ip, sizeof(ip));
@@ -943,10 +1053,24 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_CREATE:
         SetTimer(hwnd, 1, 16, NULL);
         return 0;
-    case WM_TIMER:
+    case WM_TIMER: {
+        int am_i_dead = 0;
+        EnterCriticalSection(&g_cs);
+        if (g_player_id >= 0 && g_player_id < MAX_PLAYERS) am_i_dead = g_world.players[g_player_id].is_dead;
+        LeaveCriticalSection(&g_cs);
+        
+        static int was_dead = 0;
+        if (am_i_dead && !was_dead) {
+            set_mouse_capture(0);
+        } else if (!am_i_dead && was_dead) {
+            set_mouse_capture(1);
+        }
+        was_dead = am_i_dead;
+
         update_mouse_look();
         InvalidateRect(hwnd, NULL, FALSE);
         return 0;
+    }
     case WM_SIZE:
         recompute_screen_center();
         return 0;
@@ -960,9 +1084,33 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g_cam_dist > CAM_DIST_MAX) g_cam_dist = CAM_DIST_MAX;
         return 0;
     }
-    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDOWN: {
+        if (g_show_tutorial) {
+            g_show_tutorial = 0;
+            InvalidateRect(hwnd, NULL, FALSE);
+            return 0;
+        }
+
+        int am_i_dead = 0;
+        EnterCriticalSection(&g_cs);
+        if (g_player_id >= 0 && g_player_id < MAX_PLAYERS) am_i_dead = g_world.players[g_player_id].is_dead;
+        LeaveCriticalSection(&g_cs);
+
+        if (am_i_dead) {
+            RECT rc; GetClientRect(hwnd, &rc);
+            int W = rc.right, H = rc.bottom;
+            int mx = (int)(short)LOWORD(lp);
+            int my = (int)(short)HIWORD(lp);
+            if (mx >= W/2 - 75 && mx <= W/2 + 75 && my >= H/2 + 80 && my <= H/2 + 120) {
+                g_show_tutorial = 1;
+                InvalidateRect(hwnd, NULL, FALSE);
+                return 0;
+            }
+        }
+
         if (!g_mouse_captured) set_mouse_capture(1);
         return 0;
+    }
     case WM_SETFOCUS:
         if (g_mouse_captured) {
             recompute_screen_center();

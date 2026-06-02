@@ -10,6 +10,7 @@
 #include <time.h>
 
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 #include "protocol.h"
 
@@ -20,14 +21,14 @@
 #define WIN_H 520
 
 /* ── Palette (assortie au client) ── */
-#define BG_TOP      RGB(238, 244, 252)
-#define BG_BOT      RGB(214, 226, 244)
-#define HUD_BG      RGB(255, 255, 255)
-#define HUD_BORDER  RGB(160, 188, 222)
-#define HUD_TEXT    RGB( 55,  70, 100)
-#define HUD_DIM     RGB(120, 140, 175)
-#define ACCENT      RGB( 80, 130, 200)
-#define IP_COLOR    RGB( 35,  90, 175)
+#define BG_TOP      RGB(25, 25, 32)
+#define BG_BOT      RGB(10, 10, 15)
+#define HUD_BG      RGB(30, 30, 40)
+#define HUD_BORDER  RGB(60, 60, 80)
+#define HUD_TEXT    RGB(240, 240, 240)
+#define HUD_DIM     RGB(150, 150, 170)
+#define ACCENT      RGB(0, 210, 255)
+#define IP_COLOR    RGB(0, 255, 128)
 
 static const COLORREF PLAYER_COLORS[MAX_PLAYERS] = {
     RGB(245, 110, 110),  RGB( 95, 165, 240),  RGB(120, 215, 145),
@@ -379,14 +380,14 @@ static void draw_server_ui(HWND hwnd) {
 
     /* titre */
     {
-        HFONT f = make_font(28, 1, "Segoe UI");
+        HFONT f = make_font(34, 1, "Segoe UI Black");
         HFONT of = SelectObject(memDC, f);
         SetTextColor(memDC, ACCENT);
-        RECT t = {0, y, W, y + 38};
-        DrawText(memDC, "AGAR 3D — SERVEUR", -1, &t, DT_CENTER | DT_SINGLELINE);
+        RECT t = {0, y, W, y + 44};
+        DrawText(memDC, "AGAR 3D - SERVEUR", -1, &t, DT_CENTER | DT_SINGLELINE);
         SelectObject(memDC, of);
         DeleteObject(f);
-        y += 50;
+        y += 56;
     }
 
     /* sous-titre */
@@ -411,11 +412,11 @@ static void draw_server_ui(HWND hwnd) {
         HBRUSH wb = CreateSolidBrush(HUD_BG);
         FillRect(memDC, &box, wb);
         DeleteObject(wb);
-        HPEN pen = CreatePen(PS_SOLID, 1, HUD_BORDER);
+        HPEN pen = CreatePen(PS_SOLID, 2, ACCENT);
         HPEN op = SelectObject(memDC, pen);
         HBRUSH nb = GetStockObject(NULL_BRUSH);
         HBRUSH ob = SelectObject(memDC, nb);
-        Rectangle(memDC, box.left, box.top, box.right, box.bottom);
+        RoundRect(memDC, box.left, box.top, box.right, box.bottom, 16, 16);
         SelectObject(memDC, ob); SelectObject(memDC, op);
         DeleteObject(pen);
 
