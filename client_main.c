@@ -10,7 +10,10 @@
 
 #include "protocol.h"
 
+#include <mmsystem.h>
+
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "winmm.lib")
 #pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 #define WINDOW_W 1100
 #define WINDOW_H 750
@@ -1051,7 +1054,7 @@ static LRESULT CALLBACK DlgWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_CREATE:
-        SetTimer(hwnd, 1, 16, NULL);
+        SetTimer(hwnd, 1, 1, NULL);
         return 0;
     case WM_TIMER: {
         int am_i_dead = 0;
@@ -1182,6 +1185,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 ════════════════════════════════════════ */
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     (void)hPrev;
+    timeBeginPeriod(1);
 
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
@@ -1251,6 +1255,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
         closesocket(g_sock);
         WSACleanup();
         DeleteCriticalSection(&g_cs);
+        timeEndPeriod(1);
         return 0;
     }
 
@@ -1276,5 +1281,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
     closesocket(g_sock);
     WSACleanup();
     DeleteCriticalSection(&g_cs);
+    timeEndPeriod(1);
     return 0;
 }
