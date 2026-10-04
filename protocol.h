@@ -1,4 +1,3 @@
-// protocol.h — Agar.io 3D (cube) — LAN multi-clients
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
